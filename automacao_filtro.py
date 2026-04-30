@@ -1,13 +1,5 @@
 from playwright.sync_api import sync_playwright
 import time
-import calendar
-
-# CONFIGURAÇÕES INICIAIS 
-USUARIO_TESTE = ""
-SENHA_TESTE = "" # Atualize a senha se necessário!
-FILIAL_ALVO = "" # Nossa filial para o filtro
-MESES_PARA_GERAR = [(11, 2025), (12, 2025)] # (Mês, Ano)
-TEMPO_ESPERA_FINAL = 120 # PARAMETRIZE AQUI: Tempo em segundos antes de fechar a tela (ex: 300 = 5 min)
 
 MESES_PT = {
     1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
@@ -15,24 +7,28 @@ MESES_PT = {
     9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro'
 }
 
-def pegar_ultimo_dia(mes, ano):
-    return calendar.monthrange(ano, mes)[1]
-
-def gerar_relatorios():
+def gerar_relatorios(usuario, senha, filial, periodos_para_gerar):
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False) # Mude para True para rodar em 2º plano depois!
-        context = browser.new_context()
+        browser = p.chromium.launch(headless=True)
+        
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            locale="pt-BR",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
-        # LOGIN
+        # login
         print("Acessando a página de login...")
         page.goto("https://admin.oitchau.com.br/login") 
-        page.locator("input[name='email']").fill(USUARIO_TESTE) 
-        page.locator("input[name='password']").fill(SENHA_TESTE)
-        page.locator("button:has-text('Acessar painel')").click()
+        page.locator("input[name='email']").fill(usuario) 
+        campo_senha = page.locator("input[name='password']")
+        campo_senha.fill(senha)
+        campo_senha.press("Enter") 
+        
         page.wait_for_selector("text='Folha de Frequência'", state="attached", timeout=15000)
 
-        # NAVEGAÇÃO ÚNICA COM BETA
+        # acesso beta=true e calendários
         url_base = "https://admin.oitchau.com.br/reports/detailed/?beta=true"
         page.goto(url_base)
         
@@ -45,26 +41,24 @@ def gerar_relatorios():
 
         page.wait_for_selector("button:has-text('Baixar relatório')", timeout=10000)
 
-        # LOOP DE GERAÇÃO
-        for mes, ano in MESES_PARA_GERAR:
-            nome_mes = MESES_PT[mes]
-            ultimo_dia = pegar_ultimo_dia(mes, ano)
-            print(f"\nIniciando geração para: {nome_mes}/{ano}...")
+        # looping de geração
+        for data_inicio, data_fim in periodos_para_gerar:
+            
+            str_inicio = data_inicio.strftime("%d/%m/%Y")
+            str_fim = data_fim.strftime("%d/%m/%Y")
+            print(f"\nIniciando geração para: {str_inicio} até {str_fim}...")
             
             page.locator("button:has-text('Baixar relatório de todos')").click()
             time.sleep(1) 
 
-            # FILTRO DE FILIAL 
-            if FILIAL_ALVO:
-                print(f"Buscando filial: {FILIAL_ALVO}...")
+            # filtro filial se pedirem
+            if filial:
+                print(f"Buscando filial: {filial}...")
                 campo_busca = page.locator("input[placeholder='Colaboradores']")
                 campo_busca.wait_for(state="visible")
-                
-                # Clica para focar
                 campo_busca.click(force=True)
                 time.sleep(0.5)
 
-                # Limpeza do campo 
                 campo_busca.clear(force=True)
                 time.sleep(0.2)
                 page.keyboard.press("End")
@@ -72,58 +66,59 @@ def gerar_relatorios():
                     page.keyboard.press("Backspace")
                 time.sleep(0.5)
 
-                # Trava a execução até a API responder. 
                 with page.expect_response(lambda response: "/api/company/search" in response.url, timeout=10000):
-                    campo_busca.press_sequentially(FILIAL_ALVO, delay=200)
+                    campo_busca.press_sequentially(filial, delay=200)
                 
                 print("API respondeu! Clicando no resultado...")
                 time.sleep(1) 
-                
-                # Clica diretamente no botão do menu
-                page.locator(f"button:has-text('{FILIAL_ALVO}')").last.click(force=True)
+                page.locator(f"button:has-text('{filial}')").last.click(force=True)
                 time.sleep(1) 
             
-            # CALENDÁRIO
+            # lógica de dias
             page.locator("div[class^='SelectBlock']").click()
             time.sleep(0.5)
             
-            seletor_dia_1 = f"td[aria-label*=' 1 de {nome_mes} de {ano}']"
-            seletor_ultimo_dia = f"td[aria-label*=' {ultimo_dia} de {nome_mes} de {ano}']"
+            nome_mes_inicio = MESES_PT[data_inicio.month]
+            nome_mes_fim = MESES_PT[data_fim.month]
+            
+            seletor_inicio = f"td[aria-label*=' {data_inicio.day} de {nome_mes_inicio} de {data_inicio.year}']"
+            seletor_fim = f"td[aria-label*=' {data_fim.day} de {nome_mes_fim} de {data_fim.year}']"
             seletor_seta_voltar = "svg:has(path[d^='M11.29'])"
 
+            # busca data de inicio voltando meses
             tentativas_voltar = 0
-            while not page.locator(seletor_dia_1).is_visible() and tentativas_voltar < 24:
+            while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 24:
                 page.locator(seletor_seta_voltar).last.click()
                 time.sleep(0.3) 
                 tentativas_voltar += 1
 
-            page.locator(seletor_dia_1).first.click()
-            time.sleep(0.2)
-            page.locator(seletor_ultimo_dia).first.click()
+            # clicar data inicio
+            page.locator(seletor_inicio).first.click()
+            time.sleep(0.3)
+            
+            # clicar data fim
+            page.locator(seletor_fim).first.click()
             time.sleep(0.5)
 
-            # CONFIRMAR
+            # confirmar
             print("Solicitando relatório...")
             try:
                 with page.expect_response(lambda response: "/api/client_reports/generate" in response.url, timeout=15000):
                     page.locator("button:has-text('Confirmar')").click()
-                
-                print(f"Sucesso! Servidor processou o pedido de {nome_mes}/{ano}.")
-                
+                print(f"Sucesso! Servidor processou o pedido de {str_inicio} a {str_fim}.")
                 try:
                     page.locator("button:has-text('Fechar')").click(timeout=2000)
                 except:
                     pass
             except Exception as e:
-                print(f"Aviso: A interceptação falhou ou demorou muito para {nome_mes}/{ano}.")
+                print(f"Aviso: A interceptação falhou ou demorou muito para {str_inicio} a {str_fim}.")
 
             time.sleep(1) 
             page.wait_for_selector("button:has-text('Baixar relatório de todos')", state="visible")
 
+        # tempo de espero do pop-up de download pro e-mail
+        tempo_espera_final = len(periodos_para_gerar) * 15 # 15 segundos por período
         print(f"\n--- FINALIZADO --- O robô terminou o lote!")
-        print(f"Aguardando {TEMPO_ESPERA_FINAL} segundos de segurança antes de fechar o navegador...")
-        time.sleep(TEMPO_ESPERA_FINAL) 
+        print(f"Aguardando {tempo_espera_final} segundos de segurança antes de fechar o navegador...")
+        time.sleep(tempo_espera_final) 
         browser.close()
-
-if __name__ == "__main__":
-    gerar_relatorios()
