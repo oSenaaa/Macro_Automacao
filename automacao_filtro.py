@@ -7,7 +7,9 @@ MESES_PT = {
     9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro'
 }
 
-def gerar_relatorios(usuario, senha, filial, periodos_para_gerar):
+COLUNAS_OPCIONAIS = ["Trabalhadas", "Intervalo", "Noturno", "Feriado", "Obs"]
+
+def gerar_relatorios(usuario, senha, filial, periodos_para_gerar, formato="PDF", colunas=None):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         
@@ -49,7 +51,29 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar):
             print(f"\nIniciando geração para: {str_inicio} até {str_fim}...")
             
             page.locator("button:has-text('Baixar relatório de todos')").click()
-            time.sleep(1) 
+            time.sleep(1)
+
+            # selecionar formato no modal
+            print(f"Selecionando formato: {formato}...")
+            try:
+                page.locator("input[data-testid='newSelectComponent.input']").click()
+                time.sleep(0.5)
+                page.locator(f"[data-testid='newSelectComponent.option']:has-text('{formato}')").first.click()
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"Aviso: não foi possível selecionar formato '{formato}': {e}")
+
+            # gerenciar colunas opcionais
+            if colunas is not None:
+                for col in COLUNAS_OPCIONAIS:
+                    if col not in colunas:
+                        try:
+                            print(f"  Removendo coluna: {col}")
+                            span = page.locator(f"span.badgeWithRemoveIconLabel:text-is('{col}')")
+                            span.locator("xpath=..").locator(".badgeWithRemoveIconIcon").click()
+                            time.sleep(0.3)
+                        except Exception as e:
+                            print(f"  Aviso: coluna '{col}' não pôde ser removida: {e}")
 
             # filtro filial se pedirem
             if filial:

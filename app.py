@@ -102,11 +102,33 @@ if len(datas_selecionadas) == 2:
     st.markdown(resumo_texto)
 
 st.markdown("<br>", unsafe_allow_html=True)
-tipo_relatorio = st.radio(
-    "Tipo de Documento:",
-    options=["PDF", "Excel (XLSX)"],
-    horizontal=True
+
+col_tipo, col_sub = st.columns(2)
+with col_tipo:
+    tipo_relatorio = st.radio(
+        "Tipo de Documento:",
+        options=["PDF", "Excel"],
+        horizontal=True
+    )
+with col_sub:
+    if tipo_relatorio == "Excel":
+        opcao_excel = st.radio(
+            "Formato Excel:",
+            options=["XLSX", "CSV"],
+            horizontal=True
+        )
+        formato_final = opcao_excel
+    else:
+        st.markdown("**Formato:** PDF")
+        formato_final = "PDF"
+
+COLUNAS_DISPONIVEIS = ["Data", "Pontos", "Trabalhadas", "Intervalo", "Noturno", "Feriado", "Obs"]
+colunas_selecionadas = st.multiselect(
+    "Colunas a incluir no relatório:",
+    options=COLUNAS_DISPONIVEIS,
+    default=COLUNAS_DISPONIVEIS,
 )
+st.caption("⚠️ As colunas **Data** e **Pontos** são obrigatórias na plataforma e sempre serão incluídas.")
 
 st.divider()
 
@@ -123,7 +145,7 @@ if st.button("🚀 Gerar Relatórios", type="primary", use_container_width=True)
         with st.spinner(f"O robô está rodando em 2º plano para a filial '{filial_selecionada or 'TODAS'}'. Isso pode levar alguns minutos..."):
             try:
                 # o robô agora recebe a lista de períodos 
-                gerar_relatorios(email_usuario, senha_usuario, filial_selecionada, lista_de_periodos)
+                gerar_relatorios(email_usuario, senha_usuario, filial_selecionada, lista_de_periodos, formato_final, colunas_selecionadas)
                 st.balloons() 
                 st.success(f"Tudo pronto! Foram gerados {qtd_ciclos} relatórios com sucesso. Verifique o seu e-mail!")
             except Exception as e:
