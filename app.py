@@ -2,7 +2,8 @@ import streamlit as st
 import datetime
 import calendar
 import os
-from automacao_filtro import gerar_relatorios
+import importlib
+import automacao_filtro
 
 # install unico do servidor
 @st.cache_resource
@@ -157,7 +158,8 @@ if st.button("🚀 Gerar Relatórios", type="primary", use_container_width=True)
         st.success(f"Pedido recebido! Autenticando como {email_usuario}...")
         with st.spinner(f"O robô está rodando em 2º plano para a filial '{filial_selecionada or 'TODAS'}'. Isso pode levar alguns minutos..."):
             try:
-                gerar_relatorios(
+                importlib.reload(automacao_filtro)
+                automacao_filtro.gerar_relatorios(
                     email_usuario, senha_usuario, filial_selecionada, lista_de_periodos,
                     formato=formato_final,
                     colunas=colunas_selecionadas,
