@@ -40,7 +40,8 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
         campo_senha.fill(senha)
         campo_senha.press("Enter")
 
-        page.wait_for_selector("text='Folha de Frequência'", state="attached", timeout=15000)
+        page.wait_for_url(lambda url: "/login" not in url, timeout=20000)
+        page.wait_for_load_state("domcontentloaded")
 
         # acesso beta=true
         page.goto("https://admin.oitchau.com.br/reports/detailed/?beta=true")
