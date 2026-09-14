@@ -2,8 +2,10 @@ import streamlit as st
 import datetime
 import calendar
 import os
-import importlib
-import automacao_filtro
+import sys
+import json
+import subprocess
+
 
 # install unico do servidor
 @st.cache_resource
@@ -158,15 +160,27 @@ if st.button("🚀 Gerar Relatórios", type="primary", use_container_width=True)
         st.success(f"Pedido recebido! Autenticando como {email_usuario}...")
         with st.spinner(f"O robô está rodando em 2º plano para a filial '{filial_selecionada or 'TODAS'}'. Isso pode levar alguns minutos..."):
             try:
-                importlib.reload(automacao_filtro)
-                automacao_filtro.gerar_relatorios(
-                    email_usuario, senha_usuario, filial_selecionada, lista_de_periodos,
-                    formato=formato_final,
-                    colunas=colunas_selecionadas,
-                    mostrar_desativados=mostrar_desativados,
-                    esconder_supervisores=esconder_supervisores,
-                    unir_relatorios=unir_relatorios,
+                params = {
+                    "usuario": email_usuario,
+                    "senha": senha_usuario,
+                    "filial": filial_selecionada,
+                    "periodos": [(str(s), str(e)) for s, e in lista_de_periodos],
+                    "formato": formato_final,
+                    "colunas": colunas_selecionadas,
+                    "mostrar_desativados": mostrar_desativados,
+                    "esconder_supervisores": esconder_supervisores,
+                    "unir_relatorios": unir_relatorios,
+                }
+                runner = os.path.join(os.path.dirname(__file__), "runner.py")
+                resultado = subprocess.run(
+                    [sys.executable, runner],
+                    input=json.dumps(params),
+                    capture_output=True,
+                    text=True,
+                    timeout=3600,
                 )
+                if resultado.returncode != 0:
+                    raise Exception(resultado.stderr or resultado.stdout)
                 st.balloons()
                 st.success(f"Tudo pronto! Foram gerados {qtd_ciclos} relatórios com sucesso. Verifique o seu e-mail!")
             except Exception as e:

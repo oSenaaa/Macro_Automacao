@@ -9,11 +9,11 @@ MESES_PT = {
 
 def _toggle_checkbox(page, label, valor_desejado):
     try:
-        lbl = page.locator(f"label:has-text('{label}')").first
-        chk = lbl.locator("input[type='checkbox']")
+        wrapper = page.locator(f"[data-testid='newCheckbox']:has-text('{label}')").first
+        chk = wrapper.locator("input[type='checkbox']")
         chk.wait_for(state="attached", timeout=3000)
         if chk.is_checked() != valor_desejado:
-            lbl.click()
+            wrapper.click()
             time.sleep(0.2)
     except Exception as e:
         print(f"  Aviso: checkbox '{label}' não processado: {e}")
@@ -39,13 +39,13 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
         page.locator("input[name='email']").fill(usuario)
         campo_senha = page.locator("input[name='password']")
         campo_senha.fill(senha)
-        campo_senha.press("Enter")
-
-        page.wait_for_load_state("load", timeout=20000)
+        page.locator("button:has-text('Acessar painel')").click()
+        page.wait_for_url(lambda url: "/login" not in url, timeout=15000)
+        page.wait_for_load_state("load", timeout=15000)
         time.sleep(2)
 
         page.goto("https://admin.oitchau.com.br/reports/detailed")
-        time.sleep(5)
+        time.sleep(3)
         page.wait_for_selector("button:has-text('Baixar relatório de todos')", timeout=20000)
 
         # looping de geração
