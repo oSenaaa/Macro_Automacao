@@ -59,34 +59,77 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
             time.sleep(2)
 
             # ── 1. Datas ─────────────────────────────────────────────────
-            # Abre o calendário clicando no seletor de período
-            page.locator("[data-testid='ModalDialog']").locator(
-                "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
-            ).first.click(force=True)
-            time.sleep(1)
-
             nome_mes_inicio = MESES_PT[data_inicio.month]
             nome_mes_fim = MESES_PT[data_fim.month]
-
             seletor_inicio = f"td[aria-label*=' {data_inicio.day} de {nome_mes_inicio} de {data_inicio.year}']"
             seletor_fim = f"td[aria-label*=' {data_fim.day} de {nome_mes_fim} de {data_fim.year}']"
 
-            tentativas_voltar = 0
-            while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 72:
-                page.locator(".DayPickerNavigation_button").first.dispatch_event("click")
-                time.sleep(0.3)
-                tentativas_voltar += 1
+            # Tenta abrir o calendário (até 3 vezes)
+            calendario_aberto = False
+            for _t in range(3):
+                page.locator("[data-testid='ModalDialog']").locator(
+                    "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
+                ).first.click(force=True)
+                time.sleep(1)
+                if page.locator(".DayPicker").is_visible():
+                    calendario_aberto = True
+                    break
+                print(f"  [data] tentativa {_t+1}: calendário não abriu, retentando...")
+                time.sleep(0.5)
+            print(f"  [data] calendário aberto: {calendario_aberto}")
 
-            # force=True bypassa checagem de enabled e dispara sequência completa de mouse events
-            page.locator(seletor_inicio).first.click(force=True)
-            time.sleep(0.3)
-            page.locator(seletor_fim).first.click(force=True)
-            time.sleep(0.5)
+            if calendario_aberto:
+                # Navega até o mês de início
+                tentativas_voltar = 0
+                while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 72:
+                    page.locator(".DayPickerNavigation_button").first.dispatch_event("click")
+                    time.sleep(0.3)
+                    tentativas_voltar += 1
+                print(f"  [data] navegou {tentativas_voltar} meses para trás")
 
-            # Fechar calendário clicando no título do modal
-            if page.locator(".DayPicker").is_visible():
-                page.locator("[data-testid='ModalDialog']").locator("text='Baixar relatório de todos'").click(force=True)
-                time.sleep(0.3)
+                dia_inicio_vis = page.locator(seletor_inicio).is_visible()
+                print(f"  [data] dia início visível: {dia_inicio_vis}")
+
+                if dia_inicio_vis:
+                    aria_dis = page.locator(seletor_inicio).first.get_attribute("aria-disabled")
+                    print(f"  [data] aria-disabled do dia início: {aria_dis}")
+
+                    if aria_dis == "true":
+                        print(f"  [data] AVISO: dia {data_inicio} está desabilitado nessa conta — não é possível selecionar esta data")
+                    else:
+                        # Clica com mouse completo para acionar React
+                        page.locator(seletor_inicio).first.click(force=True)
+                        time.sleep(0.5)
+                        page.locator(seletor_fim).first.click(force=True)
+                        time.sleep(0.5)
+                        print(f"  [data] cliques de início e fim executados")
+                else:
+                    print(f"  [data] ERRO: dia início não encontrado após {tentativas_voltar} navegações")
+                    meses_vis = [c.inner_text() for c in page.locator(".CalendarMonth_caption").all()]
+                    print(f"  [data] meses visíveis: {meses_vis}")
+
+                # Verifica período resultante antes de fechar
+                try:
+                    periodo_atual = page.locator("[data-testid='ModalDialog']").locator(
+                        "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
+                    ).first.inner_text()
+                    print(f"  [data] período no modal (calendário ainda aberto): '{periodo_atual}'")
+                except Exception:
+                    pass
+
+                # Fecha calendário
+                if page.locator(".DayPicker").is_visible():
+                    page.locator("[data-testid='ModalDialog']").locator("text='Baixar relatório de todos'").click(force=True)
+                    time.sleep(0.5)
+
+                # Confirma período final
+                try:
+                    periodo_final = page.locator("[data-testid='ModalDialog']").locator(
+                        "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
+                    ).first.inner_text()
+                    print(f"  [data] período confirmado no modal: '{periodo_final}'")
+                except Exception:
+                    print("  [data] não foi possível ler período final")
 
             # ── 2. Formato ───────────────────────────────────────────────
             print(f"Selecionando formato: {formato}...")

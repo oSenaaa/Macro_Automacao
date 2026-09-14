@@ -159,6 +159,7 @@ if st.button("🚀 Gerar Relatórios", type="primary", use_container_width=True)
     else:
         st.success(f"Pedido recebido! Autenticando como {email_usuario}...")
         with st.spinner(f"O robô está rodando em 2º plano para a filial '{filial_selecionada or 'TODAS'}'. Isso pode levar alguns minutos..."):
+            resultado = None
             try:
                 params = {
                     "usuario": email_usuario,
@@ -183,5 +184,11 @@ if st.button("🚀 Gerar Relatórios", type="primary", use_container_width=True)
                     raise Exception(resultado.stderr or resultado.stdout)
                 st.balloons()
                 st.success(f"Tudo pronto! Foram gerados {qtd_ciclos} relatórios com sucesso. Verifique o seu e-mail!")
+                if resultado.stdout:
+                    with st.expander("📋 Log do robô"):
+                        st.code(resultado.stdout)
             except Exception as e:
                 st.error(f"Puxa, o robô encontrou um problema: {e}")
+                if resultado and resultado.stdout:
+                    with st.expander("📋 Log do robô"):
+                        st.code(resultado.stdout)
