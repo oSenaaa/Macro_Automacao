@@ -72,7 +72,7 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
             seletor_fim = f"td[aria-label*=' {data_fim.day} de {nome_mes_fim} de {data_fim.year}']"
 
             tentativas_voltar = 0
-            while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 36:
+            while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 72:
                 # dispatch_event bypassa verificação de viewport (DayPicker fica fora do fluxo)
                 page.locator(".DayPickerNavigation_button").first.dispatch_event("click")
                 time.sleep(0.3)
