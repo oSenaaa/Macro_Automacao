@@ -58,10 +58,10 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
             page.locator("button:has-text('Baixar relatório de todos')").click()
             time.sleep(2)
 
-            # ── 1. Datas (primeiro, modal ainda sem dropdowns abertos) ────
-            # Clica no display de período (span com texto da data) para abrir o calendário
-            page.locator(".atlaskit-portal-container").locator(
-                "text=/\\d{1,2}$/"
+            # ── 1. Datas ─────────────────────────────────────────────────
+            # Abre o calendário clicando no seletor de período
+            page.locator("[data-testid='ModalDialog']").locator(
+                "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
             ).first.click(force=True)
             time.sleep(1)
 
@@ -73,17 +73,17 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
 
             tentativas_voltar = 0
             while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 72:
-                # dispatch_event bypassa verificação de viewport (DayPicker fica fora do fluxo)
                 page.locator(".DayPickerNavigation_button").first.dispatch_event("click")
                 time.sleep(0.3)
                 tentativas_voltar += 1
 
-            page.locator(seletor_inicio).first.dispatch_event("click")
+            # force=True bypassa checagem de enabled e dispara sequência completa de mouse events
+            page.locator(seletor_inicio).first.click(force=True)
             time.sleep(0.3)
-            page.locator(seletor_fim).first.dispatch_event("click")
+            page.locator(seletor_fim).first.click(force=True)
             time.sleep(0.5)
 
-            # Fechar calendário clicando no título do modal (acima do DayPicker)
+            # Fechar calendário clicando no título do modal
             if page.locator(".DayPicker").is_visible():
                 page.locator("[data-testid='ModalDialog']").locator("text='Baixar relatório de todos'").click(force=True)
                 time.sleep(0.3)
