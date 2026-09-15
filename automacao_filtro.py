@@ -1,5 +1,6 @@
 from playwright.sync_api import sync_playwright
 import time
+import json as _json
 
 MESES_PT = {
     1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
@@ -204,6 +205,45 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
 
             # ── 6. Confirmar ─────────────────────────────────────────────
             print("Solicitando relatório...")
+            start_iso = data_inicio.isoformat()
+            end_iso = data_fim.isoformat()
+            _interceptou = [False]
+
+            def _injetar_datas(route, request):
+                if _interceptou[0]:
+                    route.continue_()
+                    return
+                _interceptou[0] = True
+                try:
+                    raw = request.post_data or "{}"
+                    body = _json.loads(raw)
+                    print(f"  [api] body original: {_json.dumps(body)[:600]}")
+
+                    def _fix(obj):
+                        if isinstance(obj, dict):
+                            for k in list(obj.keys()):
+                                kl = k.lower().replace("_", "").replace("-", "")
+                                if isinstance(obj[k], (dict, list)):
+                                    _fix(obj[k])
+                                elif isinstance(obj[k], str):
+                                    if any(s in kl for s in ["start", "begin", "from", "inicio", "de"]):
+                                        print(f"  [api] {k}: {obj[k]!r} → {start_iso!r}")
+                                        obj[k] = start_iso
+                                    elif any(s in kl for s in ["end", "finish", "to", "fim", "ate"]):
+                                        print(f"  [api] {k}: {obj[k]!r} → {end_iso!r}")
+                                        obj[k] = end_iso
+                        elif isinstance(obj, list):
+                            for item in obj:
+                                _fix(item)
+
+                    _fix(body)
+                    print(f"  [api] body enviado: {_json.dumps(body)[:600]}")
+                    route.continue_(post_data=_json.dumps(body))
+                except Exception as e:
+                    print(f"  [api] erro na interceptação: {e}")
+                    route.continue_()
+
+            page.route("**/api/client_reports/generate**", _injetar_datas)
             try:
                 with page.expect_response(lambda response: "/api/client_reports/generate" in response.url, timeout=15000):
                     page.locator("button:has-text('Confirmar')").click()
@@ -214,6 +254,8 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
                     pass
             except Exception as e:
                 print(f"Aviso: A interceptação falhou ou demorou muito para {str_inicio} a {str_fim}.")
+            finally:
+                page.unroute("**/api/client_reports/generate**")
 
             time.sleep(1)
             page.wait_for_selector("button:has-text('Baixar relatório de todos')", state="visible")
