@@ -1,29 +1,87 @@
 from playwright.sync_api import sync_playwright
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 import time
-import json as _json
 
-MESES_PT = {
-    1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
-    5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
-    9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro'
+# A UI do modal só monta a query string de /api/client_reports/generate.
+# Em vez de depender do calendário/dropdowns (que mudam e têm dias desabilitados),
+# o robô reescreve os parâmetros diretamente na requisição.
+COLUNAS_API = {
+    "Data": "date",
+    "Pontos": "punches",
+    "Trabalhadas": "worked_hours",
+    "Intervalo": "break_hours",
+    "Noturno": "night_hours",
+    "Feriado": "holiday",
+    "Obs": "observation",
+    "Jornada": "schedule",
+    "Grupo de regras": "business_rules_group",
+    "Planejadas": "planned_hours",
+    "Distribuição de horas": "hours_distribution",
+    "Atraso entrada": "late_entry_hours",
+    "Saída antecipada": "early_leave_hours",
+    "Fases de Horas Extras": "extra_hours_phases",
+    "Horas Extras": "extra_hours",
+    "Desconto": "debit_hours",
+    "Fases do Banco de Horas": "hours_bank_phases",
+    "Banco Dia": "hours_bank",
+    "Horas Faltantes": "missed_hours",
+    "Banco Acumulado": "cumulative_hours_bank",
+    "Saldo projetado a expirar": "projected_expired_minutes",
+    "Data estimada de expiração": "projected_expiration_date",
+    "Interjornada": "cross_shifts_interval_diff_hours",
+    "Ajustes": "adjustments",
+    "Motivo": "reason",
+    "Sobreaviso": "on_call_hours",
+    "Acionamento": "on_call_activated_hours",
+    "Total de Sobreaviso (Sem acionamento)": "on_call_reducing_activated_hours",
+    "Fases de Intervalos não utilizados": "unused_break_phases",
+    "Intervalos não utilizados": "unused_breaks",
 }
+COLUNAS_OBRIGATORIAS = ["Data", "Pontos"]
+COLUNAS_PADRAO = ["Data", "Pontos", "Trabalhadas", "Intervalo", "Noturno", "Feriado", "Obs"]
 
-def _toggle_checkbox(page, label, valor_desejado):
-    try:
-        wrapper = page.locator(f"[data-testid='newCheckbox']:has-text('{label}')").first
-        chk = wrapper.locator("input[type='checkbox']")
-        chk.wait_for(state="attached", timeout=3000)
-        if chk.is_checked() != valor_desejado:
-            wrapper.click()
-            time.sleep(0.2)
-    except Exception as e:
-        print(f"  Aviso: checkbox '{label}' não processado: {e}")
+ROTA_GERAR = "**/api/client_reports/generate**"
+
+
+def _montar_url(url_original, data_inicio, data_fim, formato, colunas,
+                mostrar_desativados, esconder_supervisores, unir_relatorios):
+    partes = urlsplit(url_original)
+    # Mantém parâmetros desconhecidos (ex.: filtro de filial, rand) e sobrescreve o resto
+    gerenciados = {"report_format", "start_date", "end_date", "show_columns",
+                   "active", "skip_supervisors", "pdf_one_file"}
+    params = [(k, v) for k, v in parse_qsl(partes.query, keep_blank_values=True)
+              if k not in gerenciados]
+
+    nomes = COLUNAS_OBRIGATORIAS + [c for c in (colunas or COLUNAS_PADRAO)
+                                    if c not in COLUNAS_OBRIGATORIAS]
+    chaves = [COLUNAS_API[c] for c in nomes if c in COLUNAS_API]
+
+    params += [
+        ("report_format", formato.lower()),
+        ("start_date", data_inicio.isoformat()),
+        ("end_date", data_fim.isoformat()),
+        ("show_columns", ",".join(chaves)),
+    ]
+    if not mostrar_desativados:
+        params.append(("active", "true"))
+    if esconder_supervisores:
+        params.append(("skip_supervisors", "true"))
+    if unir_relatorios and formato.upper() == "PDF":
+        params.append(("pdf_one_file", "true"))
+
+    return urlunsplit(partes._replace(query=urlencode(params)))
 
 
 def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
                      formato="PDF", colunas=None,
                      mostrar_desativados=False, esconder_supervisores=False,
                      unir_relatorios=False):
+    desconhecidas = [c for c in (colunas or []) if c not in COLUNAS_API]
+    if desconhecidas:
+        print(f"Aviso: colunas sem mapeamento serão ignoradas: {desconhecidas}")
+
+    falhas = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
 
@@ -38,8 +96,7 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
         print("Acessando a página de login...")
         page.goto("https://admin.oitchau.com.br/login")
         page.locator("input[name='email']").fill(usuario)
-        campo_senha = page.locator("input[name='password']")
-        campo_senha.fill(senha)
+        page.locator("input[name='password']").fill(senha)
         page.locator("button:has-text('Acessar painel')").click()
         page.wait_for_url(lambda url: "/login" not in url, timeout=15000)
         page.wait_for_load_state("load", timeout=15000)
@@ -57,130 +114,10 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
             print(f"\nIniciando geração para: {str_inicio} até {str_fim}...")
 
             page.locator("button:has-text('Baixar relatório de todos')").click()
-            time.sleep(2)
+            page.locator("[data-testid='ModalDialog']").wait_for(state="visible", timeout=10000)
+            time.sleep(1)
 
-            # ── 1. Datas ─────────────────────────────────────────────────
-            nome_mes_inicio = MESES_PT[data_inicio.month]
-            nome_mes_fim = MESES_PT[data_fim.month]
-            seletor_inicio = f"td[aria-label*=' {data_inicio.day} de {nome_mes_inicio} de {data_inicio.year}']"
-            seletor_fim = f"td[aria-label*=' {data_fim.day} de {nome_mes_fim} de {data_fim.year}']"
-
-            # Tenta abrir o calendário (até 3 vezes)
-            calendario_aberto = False
-            for _t in range(3):
-                page.locator("[data-testid='ModalDialog']").locator(
-                    "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
-                ).first.click(force=True)
-                time.sleep(1)
-                if page.locator(".DayPicker").is_visible():
-                    calendario_aberto = True
-                    break
-                print(f"  [data] tentativa {_t+1}: calendário não abriu, retentando...")
-                time.sleep(0.5)
-            print(f"  [data] calendário aberto: {calendario_aberto}")
-
-            if calendario_aberto:
-                # Navega até o mês de início
-                tentativas_voltar = 0
-                while not page.locator(seletor_inicio).is_visible() and tentativas_voltar < 72:
-                    page.locator(".DayPickerNavigation_button").first.dispatch_event("click")
-                    time.sleep(0.3)
-                    tentativas_voltar += 1
-                print(f"  [data] navegou {tentativas_voltar} meses para trás")
-
-                dia_inicio_vis = page.locator(seletor_inicio).is_visible()
-                print(f"  [data] dia início visível: {dia_inicio_vis}")
-
-                if dia_inicio_vis:
-                    aria_dis = page.locator(seletor_inicio).first.get_attribute("aria-disabled")
-                    print(f"  [data] aria-disabled do dia início: {aria_dis}")
-
-                    if aria_dis == "true":
-                        print(f"  [data] AVISO: dia {data_inicio} está desabilitado nessa conta — não é possível selecionar esta data")
-                    else:
-                        # Clica com mouse completo para acionar React
-                        page.locator(seletor_inicio).first.click(force=True)
-                        time.sleep(0.5)
-                        page.locator(seletor_fim).first.click(force=True)
-                        time.sleep(0.5)
-                        print(f"  [data] cliques de início e fim executados")
-                else:
-                    print(f"  [data] ERRO: dia início não encontrado após {tentativas_voltar} navegações")
-                    meses_vis = [c.inner_text() for c in page.locator(".CalendarMonth_caption").all()]
-                    print(f"  [data] meses visíveis: {meses_vis}")
-
-                # Verifica período resultante antes de fechar
-                try:
-                    periodo_atual = page.locator("[data-testid='ModalDialog']").locator(
-                        "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
-                    ).first.inner_text()
-                    print(f"  [data] período no modal (calendário ainda aberto): '{periodo_atual}'")
-                except Exception:
-                    pass
-
-                # Fecha calendário
-                if page.locator(".DayPicker").is_visible():
-                    page.locator("[data-testid='ModalDialog']").locator("text='Baixar relatório de todos'").click(force=True)
-                    time.sleep(0.5)
-
-                # Confirma período final
-                try:
-                    periodo_final = page.locator("[data-testid='ModalDialog']").locator(
-                        "text=/jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/i"
-                    ).first.inner_text()
-                    print(f"  [data] período confirmado no modal: '{periodo_final}'")
-                except Exception:
-                    print("  [data] não foi possível ler período final")
-
-            # ── 2. Formato ───────────────────────────────────────────────
-            print(f"Selecionando formato: {formato}...")
-            try:
-                page.locator("input[data-testid='newSelectComponent.input']").click()
-                time.sleep(0.5)
-                page.locator(f"[data-testid='newSelectComponent.option']:has-text('{formato}')").first.click()
-                time.sleep(0.5)
-            except Exception as e:
-                print(f"Aviso: não foi possível selecionar formato '{formato}': {e}")
-
-            # ── 3. Colunas ───────────────────────────────────────────────
-            if colunas is not None:
-                print("Configurando colunas...")
-                try:
-                    col_chevron = page.locator("label").filter(has_text="Incluir colunas").locator("..").locator("button").first
-                    col_chevron.click()
-                    time.sleep(0.5)
-
-                    opts = page.locator("[data-testid='optionsList.option']").all()
-                    for opt in opts:
-                        try:
-                            opt_text = opt.locator("div").first.inner_text().strip()
-                            is_disabled = "disabledOption" in (opt.get_attribute("class") or "")
-                            is_selected = opt.locator("svg").count() > 0
-                            user_wants = opt_text in colunas
-
-                            if is_disabled:
-                                continue
-                            if is_selected and not user_wants:
-                                opt.click()
-                                time.sleep(0.2)
-                            elif not is_selected and user_wants:
-                                opt.click()
-                                time.sleep(0.2)
-                        except Exception:
-                            pass
-
-                    page.locator("label").filter(has_text="Incluir colunas").locator("..").locator("button").first.click()
-                    time.sleep(0.3)
-                except Exception as e:
-                    print(f"Aviso: configuração de colunas falhou: {e}")
-
-            # ── 4. Checkboxes ────────────────────────────────────────────
-            _toggle_checkbox(page, "Mostrar colaboradores desativados", mostrar_desativados)
-            _toggle_checkbox(page, "Esconder os supervisores", esconder_supervisores)
-            if unir_relatorios:
-                _toggle_checkbox(page, "Unir todos os relatórios em um arquivo", True)
-
-            # ── 5. Filtro filial ─────────────────────────────────────────
+            # ── Filtro filial (único campo ainda preenchido pela UI) ──────
             if filial:
                 print(f"Buscando filial: {filial}...")
                 campo_busca = page.locator("input[placeholder='Colaboradores']")
@@ -203,65 +140,51 @@ def gerar_relatorios(usuario, senha, filial, periodos_para_gerar,
                 page.locator(f"button:has-text('{filial}')").last.click(force=True)
                 time.sleep(1)
 
-            # ── 6. Confirmar ─────────────────────────────────────────────
+            # ── Confirmar, reescrevendo os parâmetros da requisição ──────
             print("Solicitando relatório...")
-            start_iso = data_inicio.isoformat()
-            end_iso = data_fim.isoformat()
-            _interceptou = [False]
+            interceptou = [False]
 
-            def _injetar_datas(route, request):
-                if _interceptou[0]:
-                    route.continue_()
-                    return
-                _interceptou[0] = True
-                try:
-                    raw = request.post_data or "{}"
-                    body = _json.loads(raw)
-                    print(f"  [api] body original: {_json.dumps(body)[:600]}")
+            def _reescrever_query(route, request, _ini=data_inicio, _fim=data_fim):
+                interceptou[0] = True
+                nova_url = _montar_url(request.url, _ini, _fim, formato, colunas,
+                                       mostrar_desativados, esconder_supervisores,
+                                       unir_relatorios)
+                print(f"  [api] url original: {request.url}")
+                print(f"  [api] url enviada:  {nova_url}")
+                route.continue_(url=nova_url)
 
-                    def _fix(obj):
-                        if isinstance(obj, dict):
-                            for k in list(obj.keys()):
-                                kl = k.lower().replace("_", "").replace("-", "")
-                                if isinstance(obj[k], (dict, list)):
-                                    _fix(obj[k])
-                                elif isinstance(obj[k], str):
-                                    if any(s in kl for s in ["start", "begin", "from", "inicio", "de"]):
-                                        print(f"  [api] {k}: {obj[k]!r} → {start_iso!r}")
-                                        obj[k] = start_iso
-                                    elif any(s in kl for s in ["end", "finish", "to", "fim", "ate"]):
-                                        print(f"  [api] {k}: {obj[k]!r} → {end_iso!r}")
-                                        obj[k] = end_iso
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                _fix(item)
-
-                    _fix(body)
-                    print(f"  [api] body enviado: {_json.dumps(body)[:600]}")
-                    route.continue_(post_data=_json.dumps(body))
-                except Exception as e:
-                    print(f"  [api] erro na interceptação: {e}")
-                    route.continue_()
-
-            page.route("**/api/client_reports/generate**", _injetar_datas)
+            page.route(ROTA_GERAR, _reescrever_query)
             try:
-                with page.expect_response(lambda response: "/api/client_reports/generate" in response.url, timeout=15000):
+                with page.expect_response(lambda response: "/api/client_reports/generate" in response.url, timeout=15000) as resp_info:
                     page.locator("button:has-text('Confirmar')").click()
+                resposta = resp_info.value
+                if not interceptou[0]:
+                    raise RuntimeError("requisição não foi interceptada")
+                if not resposta.ok:
+                    raise RuntimeError(f"API respondeu {resposta.status}: {resposta.text()[:300]}")
                 print(f"Sucesso! Servidor processou o pedido de {str_inicio} a {str_fim}.")
-                try:
-                    page.locator("button:has-text('Fechar')").click(timeout=2000)
-                except:
-                    pass
             except Exception as e:
-                print(f"Aviso: A interceptação falhou ou demorou muito para {str_inicio} a {str_fim}.")
+                print(f"ERRO ao gerar {str_inicio} a {str_fim}: {e}")
+                falhas.append(f"{str_inicio} a {str_fim}")
             finally:
-                page.unroute("**/api/client_reports/generate**")
+                page.unroute(ROTA_GERAR)
+
+            try:
+                page.locator("button:has-text('Fechar')").click(timeout=2000)
+            except Exception:
+                pass
+            if page.locator("[data-testid='ModalDialog']").count():
+                try:
+                    page.locator("[data-testid='ModalDialog'] button:has-text('Cancelar')").click(timeout=2000)
+                except Exception:
+                    pass
 
             time.sleep(1)
             page.wait_for_selector("button:has-text('Baixar relatório de todos')", state="visible")
 
-        tempo_espera_final = len(periodos_para_gerar) * 15
         print(f"\n--- FINALIZADO --- O robô terminou o lote!")
-        print(f"Aguardando {tempo_espera_final} segundos de segurança antes de fechar o navegador...")
-        time.sleep(tempo_espera_final)
+        time.sleep(5)
         browser.close()
+
+    if falhas:
+        raise RuntimeError(f"{len(falhas)} período(s) falharam: {', '.join(falhas)}")
